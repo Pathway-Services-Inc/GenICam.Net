@@ -4,15 +4,8 @@
     <TargetFrameworks>net8.0;net9.0</TargetFrameworks>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <Version>1.0.0</Version>
-    <AssemblyVersion>1.0.0.0</AssemblyVersion>
-    <FileVersion>1.0.0.0</FileVersion>
-    <GeneratePackageOnBuild>false</GeneratePackageOnBuild>
     <PackageId>GigEVision.Net</PackageId>
-    <Authors>GenICam.Net Contributors</Authors>
     <Description>.NET 8/9 implementation of the GigE Vision protocol (GVCP and GVSP) for industrial camera control and image streaming.</Description>
-    <RepositoryUrl>https://github.com/Irvinaby/GenICam.Net</RepositoryUrl>
-    <PackageLicenseExpression>MIT</PackageLicenseExpression>
   </PropertyGroup>
 
   <ItemGroup>

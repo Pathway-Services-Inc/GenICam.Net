@@ -1,0 +1,22 @@
+<Project>
+  <PropertyGroup>
+    <Version>1.0.0</Version>
+    <PackageVersion>$(Version)</PackageVersion>
+    <AssemblyVersion>1.0.0.0</AssemblyVersion>
+    <FileVersion>1.0.0.0</FileVersion>
+    <Authors>GenICam.Net Contributors</Authors>
+    <Company>GenICam.Net Contributors</Company>
+    <Product>GenICam.Net</Product>
+    <RepositoryUrl>https://github.com/Irvinaby/GenICam.Net</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageReleaseNotes>Initial baseline release of the GenICam.Net libraries and CameraViewer application.</PackageReleaseNotes>
+    <PackageTags>GenICam;GenApi;GigE Vision;industrial-camera;machine-vision</PackageTags>
+    <GeneratePackageOnBuild>false</GeneratePackageOnBuild>
+  </PropertyGroup>
+
+  <ItemGroup Condition="'$(IsPackable)' != 'false'">
+    <None Include="$(MSBuildThisFileDirectory)README.md" Pack="true" PackagePath="" Link="README.md" />
+  </ItemGroup>
+</Project>

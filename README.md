@@ -323,6 +323,14 @@ Run the tests:
 dotnet test GenICam.Net.sln
 ```
 
+Create NuGet packages for all components:
+
+```bash
+dotnet pack GenICam.Net.sln --configuration Release --output artifacts/packages
+```
+
+The baseline package version is `1.0.0`; release notes are tracked in [CHANGELOG.md](CHANGELOG.md).
+
 The core libraries target .NET 8 and .NET 9. `CameraViewer` targets `net8.0-windows` and requires Windows/WPF.
 
 ## License
