@@ -10,7 +10,7 @@
     <RootNamespace>CameraViewer</RootNamespace>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <ApplicationIcon>Assets\AppIcon.ico</ApplicationIcon>
-    <PackageId>CameraViewer</PackageId>
+    <PackageId>GenICam.Net.CameraViewer</PackageId>
     <Description>Windows WPF camera viewer for discovering GigE Vision cameras, browsing GenICam features, and streaming GVSP frames.</Description>
     <PackageTags>GenICam;GigE Vision;camera-viewer;WPF;machine-vision</PackageTags>
   </PropertyGroup>
