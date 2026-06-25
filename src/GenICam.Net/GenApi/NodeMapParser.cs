@@ -93,20 +93,36 @@ public static class NodeMapParser
                           ?? root.Attribute("ModelName")?.Value
                           ?? string.Empty;
 
-        // Parse all node elements
-        foreach (var element in root.Elements())
+        AddNodes(root, ns, nodeMap);
+
+        // Resolve cross-references
+        nodeMap.ResolveReferences();
+
+        return nodeMap;
+    }
+
+    /// <summary>
+    /// Adds every node defined under <paramref name="parent"/> to the node map,
+    /// recursively descending into "Group" wrapper elements (including
+    /// nested groups), which carry no semantic meaning but can enclose feature
+    /// definitions in vendor camera descriptions (e.g. Teledyne Dalsa Genie Nano).
+    /// </summary>
+    private static void AddNodes(XElement parent, XNamespace ns, NodeMap nodeMap)
+    {
+        foreach (var element in parent.Elements())
         {
+            if (element.Name.LocalName == "Group")
+            {
+                AddNodes(element, ns, nodeMap);
+                continue;
+            }
+
             var node = ParseNode(element, ns);
             if (node != null)
             {
                 nodeMap.AddNode(node);
             }
         }
-
-        // Resolve cross-references
-        nodeMap.ResolveReferences();
-
-        return nodeMap;
     }
 
     private static INode? ParseNode(XElement element, XNamespace ns)
