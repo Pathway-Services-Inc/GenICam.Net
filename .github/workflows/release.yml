@@ -89,7 +89,16 @@ jobs:
           user: ${{ secrets.NUGET_USER }}
 
       - name: Push to nuget.org
-        run: dotnet nuget push "artifacts/*.nupkg" --source "https://api.nuget.org/v3/index.json" --api-key ${{ steps.nuget-login.outputs.NUGET_API_KEY }} --skip-duplicate
+        # Enumerate the packages explicitly: `dotnet nuget push` does not
+        # expand forward-slash wildcards on Windows runners.
+        shell: pwsh
+        run: |
+          $packages = Get-ChildItem -Path artifacts -Filter *.nupkg
+          if ($packages.Count -eq 0) { throw "No .nupkg files found in artifacts/" }
+          foreach ($pkg in $packages) {
+            dotnet nuget push $pkg.FullName --source "https://api.nuget.org/v3/index.json" --api-key ${{ steps.nuget-login.outputs.NUGET_API_KEY }} --skip-duplicate
+            if ($LASTEXITCODE -ne 0) { throw "Push failed for $($pkg.Name)" }
+          }
 
       - name: Upload packages as workflow artifact
         uses: actions/upload-artifact@v7
