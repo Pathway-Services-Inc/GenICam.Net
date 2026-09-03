@@ -25,4 +25,11 @@
     <ProjectReference Include="..\..\src\GenICam.Net\GenICam.Net.csproj" />
   </ItemGroup>
 
+  <!-- Real camera description XMLs used by RealCameraXmlTests. Committed to the repo
+       so cameras can be added as permanent regression cases. Copied next to the test
+       assembly so they are found at run time regardless of working directory. -->
+  <ItemGroup>
+    <None Include="CameraXml\**\*.xml" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>
