@@ -1,13 +1,15 @@
 <Project>
   <PropertyGroup>
+    <!-- Default version for local builds. Release builds override this with
+         -p:Version=<tag version> from the GitHub Actions release workflow.
+         AssemblyVersion and FileVersion are derived from Version by the SDK. -->
     <Version>1.0.0</Version>
     <PackageVersion>$(Version)</PackageVersion>
-    <AssemblyVersion>1.0.0.0</AssemblyVersion>
-    <FileVersion>1.0.0.0</FileVersion>
     <Authors>GenICam.Net Contributors</Authors>
     <Company>GenICam.Net Contributors</Company>
     <Product>GenICam.Net</Product>
-    <RepositoryUrl>https://github.com/Irvinaby/GenICam.Net</RepositoryUrl>
+    <RepositoryUrl>https://github.com/trockefeller-pathway/GenICam.Net</RepositoryUrl>
+    <PackageProjectUrl>https://github.com/trockefeller-pathway/GenICam.Net</PackageProjectUrl>
     <RepositoryType>git</RepositoryType>
     <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
     <PackageReadmeFile>README.md</PackageReadmeFile>

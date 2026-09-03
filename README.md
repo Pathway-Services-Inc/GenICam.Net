@@ -65,6 +65,15 @@ This keeps the WPF composition root in the app project while the protocol librar
 
 ## Usage
 
+### Install from nuget.org
+
+Release builds are published to [nuget.org](https://www.nuget.org) by the [release workflow](.github/workflows/release.yml) whenever a `v*` tag is pushed. Because the upstream project owns the original package ids on nuget.org, this fork publishes under different ids (the assembly names and namespaces are unchanged):
+
+```bash
+dotnet add package GenICamDotNet
+dotnet add package GigEVisionDotNet
+```
+
 ### Reference the Libraries
 
 For local development, reference the projects you need:
