@@ -1,0 +1,98 @@
+name: Release NuGet Packages
+
+# Publishes NuGet packages to nuget.org.
+# Trigger by pushing a version tag (e.g. `git tag v1.0.1 && git push origin v1.0.1`)
+# or manually from the Actions tab with an explicit version.
+#
+# Authenticates to nuget.org via Trusted Publishing (OIDC) — no long-lived
+# API key. One-time setup:
+#   1. In this repo: Settings > Environments > create an environment named
+#      `production` (add protection rules such as required reviewers there
+#      to gate releases behind manual approval).
+#   2. On nuget.org: username menu > Trusted Publishing > add a policy with
+#      Repository Owner, Repository, Workflow File `release.yml`, and
+#      Environment `production`, scoped to the GenICamDotNet* and
+#      GigEVisionDotNet* package ids.
+#   3. In this repo: Settings > Secrets and variables > Actions > add a
+#      NUGET_USER secret containing the nuget.org profile (user) name that
+#      owns the policy.
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Package version (e.g. 1.0.1 or 1.1.0-beta.1)'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write # required for Trusted Publishing (GitHub OIDC token issuance)
+
+jobs:
+  publish:
+    # windows-latest is required because CameraViewer targets net8.0-windows (WPF).
+    runs-on: windows-latest
+    # Must exist under Settings > Environments and match the Environment field
+    # of the nuget.org Trusted Publishing policy. Protection rules on the
+    # environment (e.g. required reviewers) gate the publish.
+    environment: production
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: |
+            8.0.x
+            9.0.x
+
+      - name: Determine version
+        id: version
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ inputs.version }}"
+          else
+            # Strip the leading "v" from the tag name (v1.0.1 -> 1.0.1).
+            VERSION="${GITHUB_REF_NAME#v}"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Publishing version $VERSION"
+
+      - name: Restore
+        run: dotnet restore GenICam.Net.sln
+
+      - name: Build
+        run: dotnet build GenICam.Net.sln --configuration Release --no-restore -p:Version=${{ steps.version.outputs.version }}
+
+      - name: Test
+        run: dotnet test GenICam.Net.sln --configuration Release --no-build --verbosity normal
+
+      - name: Pack
+        run: |
+          dotnet pack src/GenICam.Net/GenICam.Net.csproj --configuration Release --no-build --output artifacts -p:Version=${{ steps.version.outputs.version }}
+          dotnet pack src/GigEVision.Net/GigEVision.Net.csproj --configuration Release --no-build --output artifacts -p:Version=${{ steps.version.outputs.version }}
+          dotnet pack src/CameraViewer/CameraViewer.csproj --configuration Release --no-build --output artifacts -p:Version=${{ steps.version.outputs.version }}
+
+      # Trusted Publishing: exchange the GitHub OIDC token for a short-lived
+      # (1 hour) nuget.org API key. Runs right before the push so the key
+      # cannot expire mid-release.
+      - name: NuGet login (OIDC -> temp API key)
+        uses: NuGet/login@v1
+        id: nuget-login
+        with:
+          user: ${{ secrets.NUGET_USER }}
+
+      - name: Push to nuget.org
+        run: dotnet nuget push "artifacts/*.nupkg" --source "https://api.nuget.org/v3/index.json" --api-key ${{ steps.nuget-login.outputs.NUGET_API_KEY }} --skip-duplicate
+
+      - name: Upload packages as workflow artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: nuget-packages
+          path: artifacts/*.nupkg

@@ -4,7 +4,8 @@
     <TargetFrameworks>net8.0;net9.0</TargetFrameworks>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <PackageId>GigEVision.Net</PackageId>
+    <!-- Renamed because the upstream project owns the GigEVision.Net id on nuget.org. -->
+    <PackageId>GigEVisionDotNet</PackageId>
     <Description>.NET 8/9 implementation of the GigE Vision protocol (GVCP and GVSP) for industrial camera control and image streaming.</Description>
   </PropertyGroup>
 
