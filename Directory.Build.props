@@ -8,8 +8,8 @@
     <Authors>GenICam.Net Contributors</Authors>
     <Company>GenICam.Net Contributors</Company>
     <Product>GenICam.Net</Product>
-    <RepositoryUrl>https://github.com/trockefeller-pathway/GenICam.Net</RepositoryUrl>
-    <PackageProjectUrl>https://github.com/trockefeller-pathway/GenICam.Net</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/Pathway-Services-Inc/GenICam.Net</RepositoryUrl>
+    <PackageProjectUrl>https://github.com/Pathway-Services-Inc/GenICam.Net</PackageProjectUrl>
     <RepositoryType>git</RepositoryType>
     <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
     <PackageReadmeFile>README.md</PackageReadmeFile>
