@@ -25,10 +25,16 @@ public class GigEVisionAssemblyTests
     }
 
     [Test]
-    public void GigEVisionNetAssembly_HasVersion1_0_0()
+    public void GigEVisionNetAssembly_VersionMatchesBuildVersion()
     {
+        // The release workflow stamps the whole solution with the tag version
+        // via -p:Version, so the library's assembly version must match the
+        // version this test assembly was built with rather than a fixed value.
         var version = GigEVisionNetAssembly.GetName().Version;
-        Assert.That(version, Is.EqualTo(new Version(1, 0, 0, 0)));
+        var expected = typeof(GigEVisionAssemblyTests).Assembly.GetName().Version;
+        Assert.That(version, Is.EqualTo(expected));
+        Assert.That(version, Is.Not.EqualTo(new Version(0, 0, 0, 0)),
+            "Assembly version should be stamped, not left at the default.");
     }
 
     [Test]

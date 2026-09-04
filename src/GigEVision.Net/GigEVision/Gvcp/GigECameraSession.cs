@@ -79,7 +79,6 @@ public sealed class GigECameraSession : IGigECameraSession
 
         await StopCameraAcquisitionForSetupAsync(cancellationToken);
         await ConfigureHeartbeatAsync(cancellationToken);
-        ConfigureAcquisitionDefaults();
         await Task.Delay(250, cancellationToken);
         await ConfigureStreamAsync(localIp, localPort, cancellationToken);
 
@@ -147,6 +146,22 @@ public sealed class GigECameraSession : IGigECameraSession
             logger.LogWarning(ex, "Exclusive control failed; trying control privilege");
             await client.WriteRegisterAsync(GvcpConstants.CcpRegister, 1, cancellationToken);
             logger.LogDebug("Control privilege acquired (CCP register)");
+        }
+    }
+
+    private static async Task ReleaseControlAsync(
+        GvcpClient client,
+        ILogger logger,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await client.WriteRegisterAsync(GvcpConstants.CcpRegister, 0, cancellationToken);
+            logger.LogDebug("Control released (CCP register)");
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to release control; continuing");
         }
     }
 
@@ -265,9 +280,6 @@ public sealed class GigECameraSession : IGigECameraSession
             ipValue);
 
         await WriteRegisterWithBusyRetryAsync(_client, GvcpConstants.Scp0Register, (uint)localPort, _logger, cancellationToken);
-        await WriteRegisterWithBusyRetryAsync(_client, GvcpConstants.Scps0Register, 1500, _logger, cancellationToken);
-        TrySetIntegerNode("GevSCPD", 1000);
-
         if (!TrySetIntegerNode("GevSCDA", ipValue))
         {
             try
@@ -354,16 +366,6 @@ public sealed class GigECameraSession : IGigECameraSession
         }
     }
 
-    private void ConfigureAcquisitionDefaults()
-    {
-        TrySetEnumerationNode("AcquisitionMode", "Continuous");
-        TrySetEnumerationNode("TriggerSelector", "FrameStart");
-        TrySetEnumerationNode("TriggerMode", "Off");
-        TrySetEnumerationNode("ExposureAuto", "Continuous", "Once");
-        TrySetEnumerationNode("GainAuto", "Continuous", "Once");
-        TrySetIntegerNode("AcquisitionFrameCount", 10_000);
-    }
-
     private bool TrySetIntegerNode(string nodeName, long value)
     {
         try
@@ -384,43 +386,6 @@ public sealed class GigECameraSession : IGigECameraSession
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Could not set integer node {NodeName}", nodeName);
-            return false;
-        }
-    }
-
-    private bool TrySetEnumerationNode(string nodeName, params string[] values)
-    {
-        try
-        {
-            if (NodeMap.GetNode(nodeName) is not IEnumeration node)
-                return false;
-
-            if (!IsWritable(node.AccessMode))
-            {
-                _logger.LogInformation("Skipping {NodeName}; access mode is {AccessMode}", nodeName, node.AccessMode);
-                return false;
-            }
-
-            var entry = values
-                .Select(value => node.GetEntryByName(value) ?? node.Entries.FirstOrDefault(e => string.Equals(e.Symbolic, value, StringComparison.OrdinalIgnoreCase)))
-                .FirstOrDefault(e => e is not null);
-            if (entry is null)
-            {
-                _logger.LogInformation(
-                    "Could not set {NodeName}; none of [{Values}] exist. Available: {Entries}",
-                    nodeName,
-                    string.Join(", ", values),
-                    string.Join(", ", node.Entries.Select(e => e.Symbolic)));
-                return false;
-            }
-
-            node.Value = entry.Symbolic;
-            _logger.LogInformation("Set {NodeName}={Value}", nodeName, SafeReadEnumeration(node));
-            return true;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Could not set enumeration node {NodeName}", nodeName);
             return false;
         }
     }
@@ -488,18 +453,6 @@ public sealed class GigECameraSession : IGigECameraSession
         }
     }
 
-    private static string SafeReadEnumeration(IEnumeration node)
-    {
-        try
-        {
-            return node.AccessMode == AccessMode.WO ? "<write-only>" : node.Value;
-        }
-        catch
-        {
-            return "<unreadable>";
-        }
-    }
-
     private static long ClampToIncrement(long value, IInteger node)
     {
         var clamped = Math.Min(Math.Max(value, node.Min), node.Max);
@@ -519,6 +472,8 @@ public sealed class GigECameraSession : IGigECameraSession
     public void Dispose()
     {
         StopHeartbeat();
+        Task.Run(() => ReleaseControlAsync(_client, _logger, CancellationToken.None)).GetAwaiter().GetResult();
+
         _client.Dispose();
     }
 }
