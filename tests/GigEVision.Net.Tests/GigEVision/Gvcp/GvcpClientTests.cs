@@ -118,4 +118,49 @@ public class GvcpClientTests
 
         Assert.That(ex!.Status, Is.EqualTo(GvcpStatus.WriteProtect));
     }
+
+    [Test]
+    public async Task ReadRegisterAsync_IgnoresAckForDifferentRequest()
+    {
+        var transport = new FakeUdpTransport();
+        var ep = new IPEndPoint(IPAddress.Parse("192.168.1.100"), GvcpConstants.Port);
+
+        // A late ACK from an earlier (timed-out) request arrives first, then ours (request id 1).
+        transport.EnqueueReceive(GvcpPackets.BuildReadRegAck(77, GvcpStatus.Success, 0xDEADBEEF), ep);
+        transport.EnqueueReceive(GvcpPackets.BuildReadRegAck(1, GvcpStatus.Success, 0x12345678), ep);
+
+        using var client = new GvcpClient(transport, ep);
+        var value = await client.ReadRegisterAsync(0x1000);
+
+        Assert.That(value, Is.EqualTo(0x12345678),
+            "The stale ACK must be discarded rather than returned as this request's response.");
+    }
+
+    [Test]
+    public async Task ReadRegisterAsync_IgnoresShortDatagrams()
+    {
+        var transport = new FakeUdpTransport();
+        var ep = new IPEndPoint(IPAddress.Parse("192.168.1.100"), GvcpConstants.Port);
+
+        transport.EnqueueReceive(new byte[] { 0x00, 0x01 }, ep);
+        transport.EnqueueReceive(GvcpPackets.BuildReadRegAck(1, GvcpStatus.Success, 0x0000ABCD), ep);
+
+        using var client = new GvcpClient(transport, ep);
+        var value = await client.ReadRegisterAsync(0x1000);
+
+        Assert.That(value, Is.EqualTo(0x0000ABCD));
+    }
+
+    [Test]
+    public void ReadRegisterAsync_OnlyStaleAcks_TimesOut()
+    {
+        var transport = new FakeUdpTransport();
+        var ep = new IPEndPoint(IPAddress.Parse("192.168.1.100"), GvcpConstants.Port);
+
+        transport.EnqueueReceive(GvcpPackets.BuildReadRegAck(77, GvcpStatus.Success, 0xDEADBEEF), ep);
+
+        using var client = new GvcpClient(transport, ep, timeoutMs: 100);
+
+        Assert.ThrowsAsync<TimeoutException>(async () => await client.ReadRegisterAsync(0x1000));
+    }
 }

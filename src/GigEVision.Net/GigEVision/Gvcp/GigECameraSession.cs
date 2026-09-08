@@ -40,10 +40,20 @@ public sealed class GigECameraSession : IGigECameraSession
 
     INodeMap IGigECameraSession.NodeMap => NodeMap;
 
+    /// <summary>
+    /// Connects to the camera: takes control, loads the GenICam XML, and connects the node map.
+    /// </summary>
+    /// <param name="prefetchNodeValues">
+    /// When true (default) every readable node value is read once after connecting so later
+    /// accesses are served from cache. This costs one GVCP round-trip per node, which can take
+    /// many seconds on cameras with 1000+ nodes; pass false to defer reads until each node is
+    /// first used.
+    /// </param>
     public static async Task<GigECameraSession> ConnectAsync(
         GigECameraInfo camera,
         string? xmlSaveDirectory = null,
         ILogger<GigECameraSession>? logger = null,
+        bool prefetchNodeValues = true,
         CancellationToken cancellationToken = default)
     {
         logger ??= NullLogger<GigECameraSession>.Instance;
@@ -62,7 +72,10 @@ public sealed class GigECameraSession : IGigECameraSession
             nodeMap.Connect(new GigEPort(client));
 
             var session = new GigECameraSession(camera, client, nodeMap, logger);
-            await Task.Run(() => session.PrefetchNodeValues(), cancellationToken);
+            if (prefetchNodeValues)
+                await Task.Run(() => session.PrefetchNodeValues(), cancellationToken);
+            else
+                logger.LogDebug("Node value prefetch skipped; values are read on first access");
             return session;
         }
         catch
