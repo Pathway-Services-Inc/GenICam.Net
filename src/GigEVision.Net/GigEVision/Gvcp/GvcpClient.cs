@@ -21,7 +21,7 @@ public class GvcpClient : IDisposable
 {
     private readonly IUdpTransport _transport;
     private readonly IPEndPoint _remoteEndPoint;
-    private readonly ILogger<GvcpClient> _logger;
+    private readonly ILogger _logger;
     private readonly int _timeoutMs;
     //One request in flight at a time: GVCP has no per-request demultiplexing on a
     //socket, so overlapping requests (heartbeat, feature access, settings dumps from
@@ -36,7 +36,7 @@ public class GvcpClient : IDisposable
     /// <param name="remoteEndPoint">Camera IP endpoint (IP:3956).</param>
     /// <param name="timeoutMs">Timeout for ACK responses in milliseconds.</param>
     /// <param name="logger">Optional logger instance.</param>
-    public GvcpClient(IUdpTransport transport, IPEndPoint remoteEndPoint, int timeoutMs = GvcpConstants.DefaultTimeoutMs, ILogger<GvcpClient>? logger = null)
+    public GvcpClient(IUdpTransport transport, IPEndPoint remoteEndPoint, int timeoutMs = GvcpConstants.DefaultTimeoutMs, ILogger? logger = null)
     {
         _transport = transport;
         _remoteEndPoint = remoteEndPoint;
