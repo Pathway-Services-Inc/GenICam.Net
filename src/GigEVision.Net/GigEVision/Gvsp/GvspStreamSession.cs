@@ -29,6 +29,14 @@ public sealed class GvspStreamSession : IGvspStreamSession
 
     public int LocalPort { get; private set; }
 
+    /// <summary>
+    /// How long after <see cref="Start"/> to wait before warning that no GVSP
+    /// packets have arrived. The receiver cannot distinguish "camera not sending"
+    /// from "packets blocked before reaching the socket", so the warning lists
+    /// the common causes. Set to 0 or a negative value to disable the warning.
+    /// </summary>
+    public int NoPacketWarningDelayMs { get; set; } = 5000;
+
     public GvspPacketStats PacketStats => _streamTransport?.Stats ?? new GvspPacketStats(0, 0, 0, 0, 0);
 
     public int Start(int streamPort = 0)
@@ -51,6 +59,8 @@ public sealed class GvspStreamSession : IGvspStreamSession
         IsStreaming = true;
         _logger.LogInformation("GVSP receiver started on local port {Port}", LocalPort);
         _ = RunReceiveLoopAsync();
+        if (NoPacketWarningDelayMs > 0)
+            _ = WarnIfNoPacketsArriveAsync(LocalPort, NoPacketWarningDelayMs, _cts.Token);
         return LocalPort;
     }
 
@@ -98,10 +108,35 @@ public sealed class GvspStreamSession : IGvspStreamSession
 
     private void OnUdpPacketReceived(GvspPacketStats stats, int packetLength)
     {
-        if (stats.ReceivedPacketCount <= 5)
+        if (stats.ReceivedPacketCount == 1)
+            _logger.LogInformation("First GVSP packet received on port {Port} ({Length} bytes)", LocalPort, packetLength);
+        else if (stats.ReceivedPacketCount <= 5)
             _logger.LogDebug("GVSP UDP packet {PacketCount}: {Length} bytes", stats.ReceivedPacketCount, packetLength);
 
         PacketStatsUpdated?.Invoke(this, stats);
+    }
+
+    private async Task WarnIfNoPacketsArriveAsync(int localPort, int delayMs, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await Task.Delay(delayMs, cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            return; // Session stopped before the deadline — nothing to warn about.
+        }
+
+        if (IsStreaming && PacketStats.ReceivedPacketCount == 0)
+        {
+            _logger.LogWarning(
+                "No GVSP packets received on local port {Port} within {DelayMs} ms of starting the receiver. " +
+                "Common causes: an inbound UDP firewall rule is missing or blocked for this process; " +
+                "the camera's GevSCPSPacketSize exceeds the network path MTU (jumbo frames not enabled end-to-end); " +
+                "or acquisition was never started on the camera.",
+                localPort,
+                delayMs);
+        }
     }
 
     public void Dispose() => Stop();
