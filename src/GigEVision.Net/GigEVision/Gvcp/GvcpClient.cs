@@ -44,6 +44,9 @@ public class GvcpClient : IDisposable
         _logger = logger ?? NullLogger<GvcpClient>.Instance;
     }
 
+    /// <summary>The camera endpoint this client talks to.</summary>
+    public IPEndPoint RemoteEndPoint => _remoteEndPoint;
+
     /// <summary>
     /// Reads a single 32-bit register value.
     /// </summary>

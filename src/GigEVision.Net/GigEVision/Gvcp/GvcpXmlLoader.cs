@@ -25,11 +25,15 @@ public static class GvcpXmlLoader
         var urls = await ReadCameraXmlUrlsAsync(client, logger, cancellationToken);
         logger?.LogInformation("Camera advertised {Count} XML URL(s): {Urls}", urls.Count, string.Join(", ", urls));
 
+        // Saved XML copies are named per camera (by address) so each camera keeps one
+        // current file instead of accumulating a timestamped file per connection.
+        var cameraIdentifier = client.RemoteEndPoint.Address.ToString();
+
         foreach (var url in urls)
         {
             try
             {
-                return await LoadNodeMapFromUrlAsync(client, url, logger, saveXmlDirectory, cancellationToken);
+                return await LoadNodeMapFromUrlAsync(client, url, logger, saveXmlDirectory, cameraIdentifier, cancellationToken);
             }
             catch (Exception ex)
             {
@@ -83,19 +87,20 @@ public static class GvcpXmlLoader
         string url,
         ILogger? logger,
         string? saveXmlDirectory,
+        string? cameraIdentifier,
         CancellationToken cancellationToken)
     {
         if (url.StartsWith("Local:", StringComparison.OrdinalIgnoreCase))
         {
             logger?.LogInformation("Trying local camera XML URL: {Url}", url);
-            return await LoadLocalNodeMapAsync(client, url, logger, saveXmlDirectory, cancellationToken);
+            return await LoadLocalNodeMapAsync(client, url, logger, saveXmlDirectory, cameraIdentifier, cancellationToken);
         }
 
         if (Uri.TryCreate(url, UriKind.Absolute, out var uri) &&
             (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps))
         {
             logger?.LogInformation("Trying HTTP camera XML URL: {Url}", url);
-            return await LoadHttpNodeMapAsync(uri, logger, saveXmlDirectory, cancellationToken);
+            return await LoadHttpNodeMapAsync(uri, logger, saveXmlDirectory, cameraIdentifier, cancellationToken);
         }
 
         throw new NotSupportedException($"Unsupported camera XML URL scheme: {url}");
@@ -106,6 +111,7 @@ public static class GvcpXmlLoader
         string url,
         ILogger? logger,
         string? saveXmlDirectory,
+        string? cameraIdentifier,
         CancellationToken cancellationToken)
     {
         var parts = url["Local:".Length..].Split(';', StringSplitOptions.TrimEntries);
@@ -134,12 +140,12 @@ public static class GvcpXmlLoader
                 FormatBytePreview(xmlData),
                 FormatAsciiPreview(xmlData));
 
-            return ParseCameraXml(filename, xmlData, logger, saveXmlDirectory);
+            return ParseCameraXml(filename, xmlData, logger, saveXmlDirectory, cameraIdentifier);
         }
         catch (Exception ex)
         {
             throw new InvalidOperationException(
-                $"Could not load local camera XML '{filename}' from 0x{xmlAddress:X8} ({xmlSize} bytes).",
+                $"Could not load local camera XML '{filename}' from 0x{xmlAddress:X8} ({xmlSize} bytes): {ex.Message}",
                 ex);
         }
     }
@@ -148,6 +154,7 @@ public static class GvcpXmlLoader
         Uri uri,
         ILogger? logger,
         string? saveXmlDirectory,
+        string? cameraIdentifier,
         CancellationToken cancellationToken)
     {
         var candidates = uri.Scheme == Uri.UriSchemeHttp
@@ -167,7 +174,7 @@ public static class GvcpXmlLoader
             {
                 logger?.LogInformation("Downloading camera XML from {Uri}", candidate);
                 var xmlData = await http.GetByteArrayAsync(candidate, cancellationToken);
-                return ParseCameraXml(Path.GetFileName(candidate.AbsolutePath), xmlData, logger, saveXmlDirectory);
+                return ParseCameraXml(Path.GetFileName(candidate.AbsolutePath), xmlData, logger, saveXmlDirectory, cameraIdentifier);
             }
             catch (Exception ex)
             {
@@ -233,7 +240,8 @@ public static class GvcpXmlLoader
         string filename,
         byte[] xmlData,
         ILogger? logger,
-        string? saveXmlDirectory = null)
+        string? saveXmlDirectory = null,
+        string? cameraIdentifier = null)
     {
         logger?.LogInformation(
             "Parsing camera XML payload: file={Filename}, bytes={Length}, looksLikeZip={LooksLikeZip}, previewHex={PreviewHex}, previewAscii={PreviewAscii}",
@@ -275,7 +283,18 @@ public static class GvcpXmlLoader
 
         var trimmedXml = xmlContent.TrimStart('\uFEFF', '\0').TrimEnd('\0');
         if (!string.IsNullOrWhiteSpace(saveXmlDirectory))
-            SaveCameraXml(filename, trimmedXml, saveXmlDirectory, logger);
+        {
+            // The saved copy is a diagnostic convenience; a file-system problem must
+            // never fail the camera connection.
+            try
+            {
+                SaveCameraXml(filename, trimmedXml, saveXmlDirectory, logger, cameraIdentifier);
+            }
+            catch (Exception ex)
+            {
+                logger?.LogWarning(ex, "Could not save a copy of the camera XML to {Directory}; continuing without it", saveXmlDirectory);
+            }
+        }
 
         try
         {
@@ -295,24 +314,41 @@ public static class GvcpXmlLoader
         }
     }
 
+    // Sessions connecting concurrently (e.g. several identical cameras in one
+    // process) can produce the same file name; serialize the writes so they
+    // cannot collide on the open file.
+    private static readonly object SaveLock = new();
+
     /// <summary>
     /// Saves a decoded camera XML document to a local directory and returns the written path.
+    /// With a <paramref name="cameraIdentifier"/> (e.g. the camera IP address) the file is
+    /// named <c>&lt;xml name&gt;-&lt;identifier&gt;.xml</c> and overwritten on each connection,
+    /// so each camera keeps exactly one current copy. Without one, a timestamped file is written.
+    /// Safe to call concurrently from multiple sessions.
     /// </summary>
     public static string SaveCameraXml(
         string sourceFilename,
         string xmlContent,
         string directory,
-        ILogger? logger = null)
+        ILogger? logger = null,
+        string? cameraIdentifier = null)
     {
-        Directory.CreateDirectory(directory);
-
         var baseName = Path.GetFileNameWithoutExtension(sourceFilename);
         if (string.IsNullOrWhiteSpace(baseName))
             baseName = "camera";
 
         var safeName = SanitizeFileName(baseName);
-        var path = Path.Combine(directory, $"{safeName}-{DateTime.Now:yyyyMMdd-HHmmss}.xml");
-        File.WriteAllText(path, xmlContent, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        var suffix = string.IsNullOrWhiteSpace(cameraIdentifier)
+            ? DateTime.Now.ToString("yyyyMMdd-HHmmss")
+            : SanitizeFileName(cameraIdentifier);
+        var path = Path.Combine(directory, $"{safeName}-{suffix}.xml");
+
+        lock (SaveLock)
+        {
+            Directory.CreateDirectory(directory);
+            File.WriteAllText(path, xmlContent, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        }
+
         logger?.LogInformation("Saved camera XML to {Path}", path);
         return path;
     }
