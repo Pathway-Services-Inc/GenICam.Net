@@ -132,6 +132,7 @@ public sealed class GvspStreamSession : IGvspStreamSession
             _logger.LogWarning(
                 "No GVSP packets received on local port {Port} within {DelayMs} ms of starting the receiver. " +
                 "Common causes: an inbound UDP firewall rule is missing or blocked for this process; " +
+                "a vendor GigE Vision filter driver (e.g. Sapera LT, Vimba) is bound to the adapter and intercepting the stream; " +
                 "the camera's GevSCPSPacketSize exceeds the network path MTU (jumbo frames not enabled end-to-end); " +
                 "or acquisition was never started on the camera.",
                 localPort,
