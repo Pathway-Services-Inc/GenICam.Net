@@ -338,9 +338,31 @@ Create NuGet packages for all components:
 dotnet pack GenICam.Net.sln --configuration Release --output artifacts/packages
 ```
 
-The baseline package version is `1.0.0`; release notes are tracked in [CHANGELOG.md](CHANGELOG.md).
+Versions are derived from git tags by [MinVer](https://github.com/adamralph/minver): a build at tag `v1.2.3` is `1.2.3`, and untagged commits produce a height-based prerelease such as `1.2.4-alpha.0.5`, so local builds are always truthfully versioned with nothing to bump. Release notes are tracked in [CHANGELOG.md](CHANGELOG.md).
 
 The core libraries target .NET 8 and .NET 9. `CameraViewer` targets `net8.0-windows` and requires Windows/WPF.
+
+## Releasing
+
+Publishing to nuget.org is fully automated by the [release workflow](.github/workflows/release.yml); a release is cut by creating a `v*` tag. The version comes from the tag itself (`v1.2.3` publishes `1.2.3`), and published versions are permanent on nuget.org (they can be unlisted, never deleted), so cut a `-rc.N` prerelease first when in doubt.
+
+To cut a release:
+
+1. Check the current version state on the repository's **Releases** page (or `gh release list` / `git tag -l`).
+2. Go to **Releases > Draft a new release**, enter the new tag (e.g. `v1.2.3`, or `v1.2.3-rc.1` marked as a pre-release), pick the target branch, click **Generate release notes**, and publish. Publishing creates the tag, which starts the release workflow.
+
+   Equivalent from the command line:
+
+   ```bash
+   gh release create v1.2.3 --target main --generate-notes
+   ```
+
+3. Approve the workflow run at the `production` environment gate in the **Actions** tab (if reviewers are configured).
+4. The workflow builds, tests, packs, and pushes `GenICamDotNet`, `GigEVisionDotNet`, and `GenICamDotNet.CameraViewer` to nuget.org via [Trusted Publishing](https://learn.microsoft.com/en-us/nuget/nuget-org/trusted-publishing) — no API keys involved. Expect the new version to be installable a few minutes after the run finishes.
+
+Semantic versioning guideline: patch (`v1.0.x`) for fixes that make existing behavior match its contract, minor (`v1.x.0`) for new capabilities, major (`vX.0.0`) for breaking API changes. Assembly versions are pinned to `MAJOR.0.0.0` (a MinVer default) so drop-in DLL replacement works within a major version.
+
+The one-time setup behind the pipeline (nuget.org Trusted Publishing policy, `production` environment, `NUGET_USER` secret) is documented at the top of [release.yml](.github/workflows/release.yml).
 
 ## License
 

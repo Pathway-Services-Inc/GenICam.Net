@@ -43,6 +43,11 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          # MinVer computes the version from git tags, so the full history
+          # (including tags) must be available — a shallow clone would
+          # version the build as 0.0.0-alpha.
+          fetch-depth: 0
 
       - name: Setup .NET
         uses: actions/setup-dotnet@v6
@@ -51,33 +56,35 @@ jobs:
             8.0.x
             9.0.x
 
-      - name: Determine version
+      # On a tag push MinVer derives the version from the tag itself, so no
+      # property is passed. A manual workflow_dispatch run has no tag, so the
+      # explicit version input is passed as MinVerVersionOverride.
+      - name: Determine version override
         id: version
         shell: bash
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            VERSION="${{ inputs.version }}"
+            echo "args=-p:MinVerVersionOverride=${{ inputs.version }}" >> "$GITHUB_OUTPUT"
+            echo "Publishing manually-specified version ${{ inputs.version }}"
           else
-            # Strip the leading "v" from the tag name (v1.0.1 -> 1.0.1).
-            VERSION="${GITHUB_REF_NAME#v}"
+            echo "args=" >> "$GITHUB_OUTPUT"
+            echo "Publishing version derived from tag $GITHUB_REF_NAME"
           fi
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "Publishing version $VERSION"
 
       - name: Restore
         run: dotnet restore GenICam.Net.sln
 
       - name: Build
-        run: dotnet build GenICam.Net.sln --configuration Release --no-restore -p:Version=${{ steps.version.outputs.version }}
+        run: dotnet build GenICam.Net.sln --configuration Release --no-restore ${{ steps.version.outputs.args }}
 
       - name: Test
         run: dotnet test GenICam.Net.sln --configuration Release --no-build --verbosity normal
 
       - name: Pack
         run: |
-          dotnet pack src/GenICam.Net/GenICam.Net.csproj --configuration Release --no-build --output artifacts -p:Version=${{ steps.version.outputs.version }}
-          dotnet pack src/GigEVision.Net/GigEVision.Net.csproj --configuration Release --no-build --output artifacts -p:Version=${{ steps.version.outputs.version }}
-          dotnet pack src/CameraViewer/CameraViewer.csproj --configuration Release --no-build --output artifacts -p:Version=${{ steps.version.outputs.version }}
+          dotnet pack src/GenICam.Net/GenICam.Net.csproj --configuration Release --no-build --output artifacts ${{ steps.version.outputs.args }}
+          dotnet pack src/GigEVision.Net/GigEVision.Net.csproj --configuration Release --no-build --output artifacts ${{ steps.version.outputs.args }}
+          dotnet pack src/CameraViewer/CameraViewer.csproj --configuration Release --no-build --output artifacts ${{ steps.version.outputs.args }}
 
       # Trusted Publishing: exchange the GitHub OIDC token for a short-lived
       # (1 hour) nuget.org API key. Runs right before the push so the key

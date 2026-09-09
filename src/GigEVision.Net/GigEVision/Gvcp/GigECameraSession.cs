@@ -1,5 +1,6 @@
 using System.Buffers.Binary;
 using System.Net;
+using System.Net.NetworkInformation;
 using System.Net.Sockets;
 using GenICam.Net.GenApi;
 using Microsoft.Extensions.Logging;
@@ -40,20 +41,31 @@ public sealed class GigECameraSession : IGigECameraSession
 
     INodeMap IGigECameraSession.NodeMap => NodeMap;
 
+    /// <summary>
+    /// Connects to the camera: takes control, loads the GenICam XML, and connects the node map.
+    /// </summary>
+    /// <param name="prefetchNodeValues">
+    /// When true (default) every readable node value is read once after connecting so later
+    /// accesses are served from cache. This costs one GVCP round-trip per node, which can take
+    /// many seconds on cameras with 1000+ nodes; pass false to defer reads until each node is
+    /// first used.
+    /// </param>
     public static async Task<GigECameraSession> ConnectAsync(
         GigECameraInfo camera,
         string? xmlSaveDirectory = null,
         ILogger<GigECameraSession>? logger = null,
+        bool prefetchNodeValues = true,
         CancellationToken cancellationToken = default)
     {
         logger ??= NullLogger<GigECameraSession>.Instance;
 
         var transport = new UdpTransportAdapter();
-        var client = new GvcpClient(transport, new IPEndPoint(camera.IpAddress, GvcpConstants.Port));
+        var client = new GvcpClient(transport, new IPEndPoint(camera.IpAddress, GvcpConstants.Port), logger: logger);
 
         try
         {
             logger.LogInformation("Connecting GVCP session to {IpAddress}", camera.IpAddress);
+            WarnIfCameraNotOnLocalSubnet(camera, logger);
             await TakeControlAsync(client, logger, cancellationToken);
             await ConfigureBootstrapHeartbeatAsync(client, logger, cancellationToken);
 
@@ -62,13 +74,68 @@ public sealed class GigECameraSession : IGigECameraSession
             nodeMap.Connect(new GigEPort(client));
 
             var session = new GigECameraSession(camera, client, nodeMap, logger);
-            await Task.Run(() => session.PrefetchNodeValues(), cancellationToken);
+            if (prefetchNodeValues)
+                await Task.Run(() => session.PrefetchNodeValues(), cancellationToken);
+            else
+                logger.LogDebug("Node value prefetch skipped; values are read on first access");
             return session;
         }
-        catch
+        catch (Exception ex)
         {
+            logger.LogWarning(ex, "Failed to connect GVCP session to {IpAddress}", camera.IpAddress);
             client.Dispose();
             throw;
+        }
+    }
+
+    /// <summary>
+    /// Discovery works by broadcast, so a camera on a foreign subnet is still found, but
+    /// the unicast GVCP traffic that follows is routed by the OS and never reaches it.
+    /// Warn up front so the resulting timeout is self-explanatory in the log.
+    /// </summary>
+    private static void WarnIfCameraNotOnLocalSubnet(GigECameraInfo camera, ILogger logger)
+    {
+        try
+        {
+            var cameraBytes = camera.IpAddress.GetAddressBytes();
+            var maskBytes = camera.SubnetMask.GetAddressBytes();
+            if (cameraBytes.Length != 4 || maskBytes.Length != 4)
+                return;
+            if (camera.SubnetMask.Equals(IPAddress.None) || maskBytes.All(b => b == 0))
+                return; // No usable mask reported; cannot judge.
+
+            var locals = NetworkInterface.GetAllNetworkInterfaces()
+                .Where(nic => nic.OperationalStatus == OperationalStatus.Up)
+                .SelectMany(nic => nic.GetIPProperties().UnicastAddresses)
+                .Where(ua => ua.Address.AddressFamily == AddressFamily.InterNetwork)
+                .Select(ua => ua.Address)
+                .ToList();
+
+            var onLocalSubnet = locals.Any(local =>
+            {
+                var localBytes = local.GetAddressBytes();
+                for (var i = 0; i < 4; i++)
+                {
+                    if ((localBytes[i] & maskBytes[i]) != (cameraBytes[i] & maskBytes[i]))
+                        return false;
+                }
+                return true;
+            });
+
+            if (!onLocalSubnet)
+            {
+                logger.LogWarning(
+                    "Camera {IpAddress}/{SubnetMask} is not on any local IPv4 subnet (local addresses: {Local}). " +
+                    "It was found by broadcast, but unicast GVCP requests will be routed elsewhere and time out. " +
+                    "Give a host adapter an address on the camera subnet, or change the camera IP.",
+                    camera.IpAddress,
+                    camera.SubnetMask,
+                    string.Join(", ", locals));
+            }
+        }
+        catch (NetworkInformationException)
+        {
+            // Diagnostic only; never affect the connection attempt.
         }
     }
 

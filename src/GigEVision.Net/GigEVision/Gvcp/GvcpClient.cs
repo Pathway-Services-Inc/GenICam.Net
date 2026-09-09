@@ -21,9 +21,13 @@ public class GvcpClient : IDisposable
 {
     private readonly IUdpTransport _transport;
     private readonly IPEndPoint _remoteEndPoint;
-    private readonly ILogger<GvcpClient> _logger;
+    private readonly ILogger _logger;
     private readonly int _timeoutMs;
-    private ushort _requestId;
+    //One request in flight at a time: GVCP has no per-request demultiplexing on a
+    //socket, so overlapping requests (heartbeat, feature access, settings dumps from
+    //other threads) would otherwise consume each other's ACKs.
+    private readonly SemaphoreSlim _requestGate = new(1, 1);
+    private int _requestId;
 
     /// <summary>
     /// Creates a new GVCP client connected to the specified camera endpoint.
@@ -32,13 +36,16 @@ public class GvcpClient : IDisposable
     /// <param name="remoteEndPoint">Camera IP endpoint (IP:3956).</param>
     /// <param name="timeoutMs">Timeout for ACK responses in milliseconds.</param>
     /// <param name="logger">Optional logger instance.</param>
-    public GvcpClient(IUdpTransport transport, IPEndPoint remoteEndPoint, int timeoutMs = GvcpConstants.DefaultTimeoutMs, ILogger<GvcpClient>? logger = null)
+    public GvcpClient(IUdpTransport transport, IPEndPoint remoteEndPoint, int timeoutMs = GvcpConstants.DefaultTimeoutMs, ILogger? logger = null)
     {
         _transport = transport;
         _remoteEndPoint = remoteEndPoint;
         _timeoutMs = timeoutMs;
         _logger = logger ?? NullLogger<GvcpClient>.Instance;
     }
+
+    /// <summary>The camera endpoint this client talks to.</summary>
+    public IPEndPoint RemoteEndPoint => _remoteEndPoint;
 
     /// <summary>
     /// Reads a single 32-bit register value.
@@ -54,7 +61,7 @@ public class GvcpClient : IDisposable
         var reqId = NextRequestId();
         var packet = GvcpPackets.BuildReadRegCmd(reqId, address);
 
-        var response = await SendAndReceiveAsync(packet, cancellationToken);
+        var response = await SendAndReceiveAsync(reqId, packet, cancellationToken);
         var ackHeader = GvcpAckHeader.FromBytes(response);
 
         ThrowIfError(ackHeader, $"ReadRegister address=0x{address:X8}");
@@ -78,7 +85,7 @@ public class GvcpClient : IDisposable
         var reqId = NextRequestId();
         var packet = GvcpPackets.BuildWriteRegCmd(reqId, (address, value));
 
-        var response = await SendAndReceiveAsync(packet, cancellationToken);
+        var response = await SendAndReceiveAsync(reqId, packet, cancellationToken);
         var ackHeader = GvcpAckHeader.FromBytes(response);
 
         ThrowIfError(ackHeader, $"WriteRegister address=0x{address:X8}, value=0x{value:X8}");
@@ -100,7 +107,7 @@ public class GvcpClient : IDisposable
         var reqId = NextRequestId();
         var packet = GvcpPackets.BuildReadMemCmd(reqId, address, (ushort)length);
 
-        var response = await SendAndReceiveAsync(packet, cancellationToken);
+        var response = await SendAndReceiveAsync(reqId, packet, cancellationToken);
         var ackHeader = GvcpAckHeader.FromBytes(response);
 
         ThrowIfError(ackHeader, $"ReadMemory address=0x{address:X8}, length={length}");
@@ -124,33 +131,67 @@ public class GvcpClient : IDisposable
         var reqId = NextRequestId();
         var packet = GvcpPackets.BuildWriteMemCmd(reqId, address, data);
 
-        var response = await SendAndReceiveAsync(packet, cancellationToken);
+        var response = await SendAndReceiveAsync(reqId, packet, cancellationToken);
         var ackHeader = GvcpAckHeader.FromBytes(response);
 
         ThrowIfError(ackHeader, $"WriteMemory address=0x{address:X8}, length={data.Length}");
         _logger.LogDebug("WriteMemory 0x{Address:X8} succeeded", address);
     }
 
-    private async Task<byte[]> SendAndReceiveAsync(byte[] packet, CancellationToken cancellationToken)
+    private async Task<byte[]> SendAndReceiveAsync(ushort requestId, byte[] packet, CancellationToken cancellationToken)
     {
-        await _transport.SendAsync(packet, _remoteEndPoint, cancellationToken);
-
-        using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        cts.CancelAfter(_timeoutMs);
-
+        await _requestGate.WaitAsync(cancellationToken);
         try
         {
-            var result = await _transport.ReceiveAsync(cts.Token);
-            return result.Buffer;
+            await _transport.SendAsync(packet, _remoteEndPoint, cancellationToken);
+
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            cts.CancelAfter(_timeoutMs);
+
+            try
+            {
+                while (true)
+                {
+                    var result = await _transport.ReceiveAsync(cts.Token);
+                    var buffer = result.Buffer;
+
+                    //Only accept the ACK for this request. Anything else is a late ACK
+                    //for a request that already timed out (or a stray datagram) and
+                    //must not be mistaken for our response.
+                    if (buffer.Length >= GvcpConstants.AckHeaderSize
+                        && GvcpAckHeader.FromBytes(buffer).AckId == requestId)
+                    {
+                        return buffer;
+                    }
+
+                    _logger.LogDebug(
+                        "Discarding GVCP datagram that does not match request {RequestId} ({Length} bytes)",
+                        requestId,
+                        buffer.Length);
+                }
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            {
+                _logger.LogWarning("GVCP timeout after {TimeoutMs}ms to {EndPoint}", _timeoutMs, _remoteEndPoint);
+                throw new TimeoutException($"No GVCP response received within {_timeoutMs}ms.");
+            }
         }
-        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        finally
         {
-            _logger.LogWarning("GVCP timeout after {TimeoutMs}ms to {EndPoint}", _timeoutMs, _remoteEndPoint);
-            throw new TimeoutException($"No GVCP response received within {_timeoutMs}ms.");
+            _requestGate.Release();
         }
     }
 
-    private ushort NextRequestId() => ++_requestId;
+    //Thread-safe; request id 0 is reserved by the GVCP specification, so skip it on wrap-around.
+    private ushort NextRequestId()
+    {
+        while (true)
+        {
+            var id = (ushort)Interlocked.Increment(ref _requestId);
+            if (id != 0)
+                return id;
+        }
+    }
 
     private static void ThrowIfError(GvcpAckHeader ackHeader, string context)
     {
@@ -166,6 +207,7 @@ public class GvcpClient : IDisposable
     public void Dispose()
     {
         _transport.Dispose();
+        _requestGate.Dispose();
         GC.SuppressFinalize(this);
     }
 }

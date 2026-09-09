@@ -1,10 +1,10 @@
 <Project>
   <PropertyGroup>
-    <!-- Default version for local builds. Release builds override this with
-         -p:Version=<tag version> from the GitHub Actions release workflow.
-         AssemblyVersion and FileVersion are derived from Version by the SDK. -->
-    <Version>1.0.0</Version>
-    <PackageVersion>$(Version)</PackageVersion>
+    <!-- Versions are computed from git tags by MinVer: a build at tag v1.2.3
+         is 1.2.3, and untagged commits get a height-based prerelease such as
+         1.2.4-alpha.0.5 — locally and in CI alike, so there is no version
+         property to bump. Pushing a `v*` tag is the version bump. -->
+    <MinVerTagPrefix>v</MinVerTagPrefix>
     <Authors>GenICam.Net Contributors</Authors>
     <Company>GenICam.Net Contributors</Company>
     <Product>GenICam.Net</Product>
@@ -17,6 +17,10 @@
     <PackageTags>GenICam;GenApi;GigE Vision;industrial-camera;machine-vision</PackageTags>
     <GeneratePackageOnBuild>false</GeneratePackageOnBuild>
   </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="MinVer" Version="7.0.0" PrivateAssets="all" />
+  </ItemGroup>
 
   <ItemGroup Condition="'$(IsPackable)' != 'false'">
     <None Include="$(MSBuildThisFileDirectory)README.md" Pack="true" PackagePath="" Link="README.md" />

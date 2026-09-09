@@ -185,4 +185,80 @@ public class GvcpXmlLoaderTests
             await stream.WriteAsync(bytes, _cts.Token);
         }
     }
+
+    [Test]
+    public void SaveCameraXml_ConcurrentCallsForSameFile_DoNotThrow()
+    {
+        // Several identical cameras connecting in parallel save under the same
+        // timestamped name; the writes must not collide on the open file.
+        var saveDirectory = Path.Combine(TestContext.CurrentContext.WorkDirectory, $"camera-xml-{Guid.NewGuid():N}");
+        var xml = "<RegisterDescription>" + new string('x', 500_000) + "</RegisterDescription>";
+
+        Assert.DoesNotThrow(() =>
+            Parallel.For(0, 8, _ => GvcpXmlLoader.SaveCameraXml("same-camera.zip", xml, saveDirectory)));
+
+        var savedFile = Directory.GetFiles(saveDirectory, "same-camera-*.xml");
+        Assert.That(savedFile, Is.Not.Empty);
+        Assert.That(File.ReadAllText(savedFile[0]), Is.EqualTo(xml));
+    }
+
+    [Test]
+    public async Task LoadNodeMapAsync_WhenSaveDirectoryUnwritable_StillLoadsNodeMap()
+    {
+        var transport = new FakeUdpTransport();
+        using var client = new GvcpClient(transport, new IPEndPoint(IPAddress.Loopback, GvcpConstants.Port));
+
+        // A file where the directory should be makes Directory.CreateDirectory throw.
+        var blocker = Path.Combine(TestContext.CurrentContext.WorkDirectory, $"camera-xml-{Guid.NewGuid():N}");
+        File.WriteAllText(blocker, "not a directory");
+
+        var xml = Encoding.UTF8.GetBytes("""
+            <RegisterDescription>
+              <Integer Name="Width">
+                <Value>800</Value>
+              </Integer>
+            </RegisterDescription>
+            """);
+
+        transport.EnqueueReceive(BuildReadMemAck(1, GvcpConstants.FirstUrlRegister,
+            BuildBootstrapUrl($"Local:test-camera.xml;0x00004000;0x{xml.Length:X8}")));
+        transport.EnqueueReceive(BuildReadMemAck(2, GvcpConstants.SecondUrlRegister, BuildBootstrapUrl(string.Empty)));
+        transport.EnqueueReceive(BuildReadMemAck(3, 0x00004000, PadToReadMemoryAlignment(xml)));
+
+        var nodeMap = await GvcpXmlLoader.LoadNodeMapAsync(client, saveXmlDirectory: blocker);
+
+        Assert.That(((IInteger)nodeMap.GetNode("Width")!).Value, Is.EqualTo(800),
+            "A failure to save the diagnostic XML copy must not fail the connection.");
+    }
+
+    [Test]
+    public async Task LoadNodeMapAsync_SavesOneXmlPerCamera_NamedByAddress_AndOverwrites()
+    {
+        var transport = new FakeUdpTransport();
+        using var client = new GvcpClient(transport, new IPEndPoint(IPAddress.Parse("172.16.132.2"), GvcpConstants.Port));
+        var saveDirectory = Path.Combine(TestContext.CurrentContext.WorkDirectory, $"camera-xml-{Guid.NewGuid():N}");
+        var xml = Encoding.UTF8.GetBytes("""
+            <RegisterDescription>
+              <Integer Name="Width">
+                <Value>800</Value>
+              </Integer>
+            </RegisterDescription>
+            """);
+
+        // Two connections to the same camera (request ids continue 1..3 then 4..6).
+        for (ushort reqId = 1; reqId <= 4; reqId += 3)
+        {
+            transport.EnqueueReceive(BuildReadMemAck(reqId, GvcpConstants.FirstUrlRegister,
+                BuildBootstrapUrl($"Local:test-camera.xml;0x00004000;0x{xml.Length:X8}")));
+            transport.EnqueueReceive(BuildReadMemAck((ushort)(reqId + 1), GvcpConstants.SecondUrlRegister, BuildBootstrapUrl(string.Empty)));
+            transport.EnqueueReceive(BuildReadMemAck((ushort)(reqId + 2), 0x00004000, PadToReadMemoryAlignment(xml)));
+        }
+
+        await GvcpXmlLoader.LoadNodeMapAsync(client, saveXmlDirectory: saveDirectory);
+        await GvcpXmlLoader.LoadNodeMapAsync(client, saveXmlDirectory: saveDirectory);
+
+        var files = Directory.GetFiles(saveDirectory, "*.xml");
+        Assert.That(files, Has.Length.EqualTo(1), "Reconnecting must overwrite the camera file, not add another.");
+        Assert.That(Path.GetFileName(files[0]), Is.EqualTo("test-camera-172.16.132.2.xml"));
+    }
 }

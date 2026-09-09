@@ -10,6 +10,7 @@ public sealed class GigECameraSessionFactory(ILogger<GigECameraSession>? logger 
     public async Task<IGigECameraSession> ConnectAsync(
         GigECameraInfo camera,
         string? xmlSaveDirectory = null,
+        bool prefetchNodeValues = true,
         CancellationToken cancellationToken = default)
-        => await GigECameraSession.ConnectAsync(camera, xmlSaveDirectory, logger, cancellationToken);
+        => await GigECameraSession.ConnectAsync(camera, xmlSaveDirectory, logger, prefetchNodeValues, cancellationToken);
 }
